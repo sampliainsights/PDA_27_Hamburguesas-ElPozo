@@ -705,6 +705,9 @@ const CONFIG = {
   notReceived: null,   // aquí «recibido» viene de la columna ca3rh; el filtro por comentario daría falsos positivos
   // true = se muestran TODAS las filas de la hoja, también las de quien tiene recibido = «No». Pon false para volver a excluirlas.
   includeAllRows: true,
+  // false = el informe lee SOLO la copia local (#snapshot, 118 filas a 26/10/2026) y no consulta la hoja.
+  // Pon true para volver a leer la hoja en vivo (hoy trae más filas: llegaron respuestas después del 26/10).
+  liveData: false,
   // Hoja de respuestas de Google Forms: las cabeceras son el texto de la pregunta, no un question_id
   attrs: [
     { k: 'glob', label: 'Valoración global',        short: 'Valoración global', art: 'La valoración global',      rx: /valoraci[oó]n global/i, q: '¿Cuál es tu valoración global de este producto?' },
@@ -838,12 +841,18 @@ function fromSamplia(matrix) {
   const miss = ['ts', 'compra', 'porque', ...CONFIG.attrs.map(a => a.k)].filter(k => col(k) < 0);
   if (miss.length) throw new Error('Formato Samplia: faltan las columnas ' + miss.map(k => S[k]).join(', '));
   const head = ['Marca temporal', ...CONFIG.attrs.map(a => a.q), '¿Comprarías este producto?', '¿Por qué?', 'Sentimiento'];
+  // Una fila solo es una respuesta si contesta algo: valoraciones, compra, comentario o «recibido». Las filas de la hoja sin ninguna respuesta no cuentan.
+  const ansCols = [...CONFIG.attrs.map(a => col(a.k)), col('compra'), col('porque'), rc].filter(i => i >= 0);
+  const answered = r => ansCols.some(i => String(r[i] ?? '').trim() !== '');
+  let blank = 0;
   let excl = 0;
   const body = matrix.slice(hi + 1).filter(r => {
+    if (!answered(r)) { blank++; return false; }
     if (!CONFIG.includeAllRows && rc >= 0 && /^no\b/.test(norm(String(r[rc] ?? '').trim()))) { excl++; return false; }
     return true;
   }).map(r => [r[col('ts')], ...CONFIG.attrs.map(a => r[col(a.k)]), r[col('compra')], r[col('porque')], '']);
   state.preExcluded = excl;
+  if (blank) console.info('[datos] ' + blank + ' filas de la hoja sin ninguna respuesta: no se cuentan');
   return [head, ...body];
 }
 function toMatrix(txt) {
@@ -907,6 +916,11 @@ async function fetchText(url, ms = 9000) {
 async function loadData() {
   setStatus('', 'Cargando datos…');
   const errors = [];
+  if (CONFIG.liveData === false) {   // datos congelados: solo la copia local, sin consultar la hoja
+    state.rows = buildRows(toMatrix($('#snapshot').textContent.trim())); state.source = 'local';
+    setStatus('live', '');
+    return;
+  }
   if (['http:', 'https:', 'file:'].includes(location.protocol)) {
     const attempt = list => Promise.all(list.map(async src => {
       const url = src.url(CONFIG.gid);
