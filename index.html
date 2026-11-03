@@ -257,6 +257,13 @@ section{margin-top:34px}
 .tag.score{margin-left:auto;background:none;border:0;color:var(--ink-50);padding:0}
 .empty{grid-column:1/-1;text-align:center;color:var(--ink-50);padding:28px;border:1px dashed var(--line);border-radius:14px;font-size:.9rem}
 .more{margin:14px auto 0;display:flex}
+.response-table-wrap{overflow-x:auto}
+.response-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.response-table th,.response-table td{padding:9px 10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.response-table th{position:sticky;top:0;background:var(--mist);font-family:var(--font-head);font-weight:700;white-space:nowrap}
+.response-table td:nth-child(1),.response-table td:nth-child(n+2):nth-child(-n+7),.response-table td:nth-child(9){white-space:nowrap}
+.response-table td:nth-child(8){min-width:240px;white-space:normal}
+.response-table tbody tr:hover{background:var(--blush-50)}
 
 footer{margin-top:40px;color:var(--ink-50);font-size:.78rem;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:16px}
 
@@ -382,6 +389,7 @@ body.pdf-mode *{animation:none !important;transition:none !important}
       <a href="#compra">Intención de compra</a>
       <a href="#sentimiento">Sentimiento</a>
       <a href="#opiniones">Opiniones</a>
+      <a href="#respuestas">Respuestas</a>
     </nav>
 
     <div class="status" id="status"><i></i><span>Cargando datos…</span></div>
@@ -508,7 +516,23 @@ body.pdf-mode *{animation:none !important;transition:none !important}
       </div>
       <p class="vb-count" id="vbCount" aria-live="polite"></p>
       <div class="vb-list" id="vbList"></div>
-      <button class="btn more" id="vbMore" type="button" hidden>Ver más opiniones</button>
+    </article>
+  </section>
+
+  <section id="respuestas">
+    <div class="sec-head">
+      <div>
+        <h2>Respuestas individuales</h2>
+        <p>Todos los registros de la fuente, sin aplicar los filtros generales.</p>
+      </div>
+    </div>
+    <article class="card">
+      <p class="vb-count" id="responseCount" aria-live="polite"></p>
+      <div class="response-table-wrap">
+        <table class="response-table" id="responseTable">
+          <caption class="sr-only">Todos los registros individuales de la encuesta</caption>
+        </table>
+      </div>
     </article>
   </section>
 
@@ -661,8 +685,10 @@ const CONFIG = {
     const base = 'https://docs.google.com/spreadsheets/d/1fnJ53KJQ1HBUGjkq4033cwJ_FvUryLWWnJjVzN2JWKk';
     const g = v => v ? '&gid=' + v : '';
     return [
+      { name: 'gviz CSV',    url: gid => `${base}/gviz/tq?tqx=out:csv&headers=1${g(gid)}` },
       { name: 'CSV export',  url: gid => `${base}/export?format=csv${g(gid)}` },
-      { name: 'gviz CSV',    url: gid => `${base}/gviz/tq?tqx=out:csv&headers=1${g(gid)}` }
+      { name: 'gviz «Extracto 1»',       url: () => `${base}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent('Extracto 1')}` },
+      { name: 'gviz «Hoja vinculada 1»', url: () => `${base}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent('Hoja vinculada 1')}` }
     ];
   })(),
   // ID de pregunta (cabecera de la hoja Samplia) → atributo del informe.
@@ -677,6 +703,8 @@ const CONFIG = {
   maxCols: 9,
   // Personas que dicen no haber recibido o probado el producto: sus respuestas no valoran el producto y se excluyen del informe
   notReceived: null,   // aquí «recibido» viene de la columna ca3rh; el filtro por comentario daría falsos positivos
+  // true = se muestran TODAS las filas de la hoja, también las de quien tiene recibido = «No». Pon false para volver a excluirlas.
+  includeAllRows: true,
   // Hoja de respuestas de Google Forms: las cabeceras son el texto de la pregunta, no un question_id
   attrs: [
     { k: 'glob', label: 'Valoración global',        short: 'Valoración global', art: 'La valoración global',      rx: /valoraci[oó]n global/i, q: '¿Cuál es tu valoración global de este producto?' },
@@ -706,7 +734,7 @@ const state = {
   rows: [], headers: {}, source: '', liveErrors: [], excluded: 0, preExcluded: 0,
   f: { compra: 'all', gen: 'all', age: 'all' },
   compare: true,
-  vb: { q: '', sent: 'all', theme: null, limit: 12 }
+  vb: { q: '', sent: 'all', theme: null }
 };
 const charts = {};
 const $ = (s, r = document) => r.querySelector(s);
@@ -812,7 +840,7 @@ function fromSamplia(matrix) {
   const head = ['Marca temporal', ...CONFIG.attrs.map(a => a.q), '¿Comprarías este producto?', '¿Por qué?', 'Sentimiento'];
   let excl = 0;
   const body = matrix.slice(hi + 1).filter(r => {
-    if (rc >= 0 && /^no\b/.test(norm(String(r[rc] ?? '').trim()))) { excl++; return false; }
+    if (!CONFIG.includeAllRows && rc >= 0 && /^no\b/.test(norm(String(r[rc] ?? '').trim()))) { excl++; return false; }
     return true;
   }).map(r => [r[col('ts')], ...CONFIG.attrs.map(a => r[col(a.k)]), r[col('compra')], r[col('porque')], '']);
   state.preExcluded = excl;
@@ -860,7 +888,7 @@ function buildRows(matrix) {
     const g = norm(get('gen')); o.gen = /^(f|mujer)/.test(g) ? 'Mujer' : /^(m|hombre)/.test(g) ? 'Hombre' : null;
     const age = parseInt(get('age'), 10);
     o.ageB = isNaN(age) ? null : (CONFIG.ageBands.find(([, lo, hi]) => age >= lo && age <= hi) || [null])[0];
-    if (CONFIG.attrs.some(a => o[a.k] != null) || o.compra) rows.push(o);
+    rows.push(o);   // todas las filas de la hoja cuentan; las celdas vacías simplemente no entran en las medias
   });
   if (!rows.length) throw new Error('No hay respuestas válidas');
   return rows;
@@ -880,17 +908,23 @@ async function loadData() {
   setStatus('', 'Cargando datos…');
   const errors = [];
   if (['http:', 'https:', 'file:'].includes(location.protocol)) {
-    for (const src of CONFIG.sources) {
+    const tries = await Promise.all(CONFIG.sources.map(async src => {
       const url = src.url(CONFIG.gid);
       try {
-        const txt = await fetchText(url);
-        state.rows = buildRows(toMatrix(txt)); state.source = 'live';
-        setStatus('live', '');
-        return;
+        const rows = buildRows(toMatrix(await fetchText(url)));
+        return { src, rows, excluded: state.excluded, totalRows: state.totalRows, headers: state.headers };
       } catch (e) {
         errors.push(src.name + ': ' + e.message);
         console.warn('[datos] ' + src.name + ' falló (' + url + '):', e.message);
+        return null;
       }
+    }));
+    const best = tries.filter(Boolean).sort((a, b) => b.rows.length - a.rows.length || (b.totalRows || 0) - (a.totalRows || 0))[0];
+    if (best) {
+      Object.assign(state, { rows: best.rows, excluded: best.excluded, totalRows: best.totalRows, headers: best.headers, source: 'live' });
+      console.info('[datos] Fuente usada: ' + best.src.name + ' (' + best.rows.length + ' respuestas)');
+      setStatus('live', '');
+      return;
     }
   } else errors.push('protocolo ' + location.protocol + ' sin acceso a la red');
   state.liveErrors = errors;
@@ -1193,9 +1227,8 @@ function highlight(text) {
 }
 function renderVerbatims() {
   const list = vbRows(), total = rowsSel().filter(r => r.porque).length;
-  const shown = list.slice(0, state.vb.limit);
   const cls = { Positivo: 'pos', Neutro: 'neu', Negativo: 'neg' };
-  $('#vbList').innerHTML = shown.length ? shown.map(r => `
+  $('#vbList').innerHTML = list.length ? list.map(r => `
     <article class="vb">
       <p>${highlight(r.porque)}</p>
       <div class="vb-meta">
@@ -1206,17 +1239,31 @@ function renderVerbatims() {
       </div>
     </article>`).join('')
     : `<div class="empty">Ninguna opinión coincide con estos filtros. Prueba con otra palabra o quita el filtro de tema.</div>`;
-  $('#vbCount').textContent = `Mostrando ${shown.length} de ${list.length} opiniones` + (list.length !== total ? ` (${total} en total con los filtros generales)` : '');
-  $('#vbMore').hidden = list.length <= state.vb.limit;
+  $('#vbCount').textContent = `Mostrando las ${list.length} opiniones` + (list.length !== total ? ` (${total} en total con los filtros generales)` : '');
+}
+function renderResponses() {
+  const columns = [
+    { label: 'Fecha', key: 'ts' },
+    ...CONFIG.attrs.map(a => ({ label: a.short, key: a.k })),
+    { label: '¿Lo compraría?', key: 'compra' },
+    { label: '¿Por qué?', key: 'porque' },
+    { label: 'Sentimiento', key: 'sent' }
+  ];
+  $('#responseCount').textContent = `${state.rows.length} respuestas`;
+  $('#responseTable').innerHTML = `<thead><tr>${columns.map(c => `<th scope="col">${esc(c.label)}</th>`).join('')}</tr></thead>
+    <tbody>${state.rows.map(row => `<tr>${columns.map(c => {
+      const value = row[c.key];
+      return `<td>${value == null || value === '' ? '–' : esc(value)}</td>`;
+    }).join('')}</tr>`).join('')}</tbody>`;
 }
 function setVbSent(v, scroll) {
-  state.vb.sent = v; state.vb.limit = 12;
+  state.vb.sent = v;
   $$('#vbSent button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
   renderVerbatims(); renderActiveFilter();
   if (scroll) $('#opiniones').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
 }
 function setVbTheme(v) {
-  state.vb.theme = v ? { v, mode: 'grouped' } : null; state.vb.limit = 12;
+  state.vb.theme = v ? { v, mode: 'grouped' } : null;
   renderVerbatims(); renderActiveFilter(); renderTheme();
   if (v) $('#opiniones').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
 }
@@ -1290,7 +1337,7 @@ function syncDemoFilters() {
 function renderAll() {
   syncDemoFilters(); renderHero(); renderActiveFilter(); renderKPIs(); renderInsights();
   renderRadar(); renderDumbbell();
-  renderMatrix(); renderTheme(); renderVerbatims();
+  renderMatrix(); renderTheme(); renderVerbatims(); renderResponses();
 }
 
 /* ================= Controles ================= */
@@ -1313,8 +1360,7 @@ function initControls() {
   segAge = setupSeg($('#segAge'), v => { state.f.age = v; renderAll(); });
   $('#cmpToggle').addEventListener('change', e => { state.compare = e.target.checked; renderRadar(); renderHero(); });
   $$('#vbSent button').forEach(b => b.addEventListener('click', () => setVbSent(b.dataset.v)));
-  let t; $('#vbSearch').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { state.vb.q = e.target.value; state.vb.limit = 12; renderVerbatims(); }, 120); });
-  $('#vbMore').addEventListener('click', () => { state.vb.limit += 12; renderVerbatims(); });
+  let t; $('#vbSearch').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { state.vb.q = e.target.value; renderVerbatims(); }, 120); });
   $('#activeFilter').addEventListener('click', e => {
     const k = e.target.closest('[data-clear]')?.dataset.clear; if (!k) return;
     if (k === 'compra') { state.f.compra = 'all'; segCompra.set('all'); renderAll(); }
@@ -1345,7 +1391,7 @@ function initControls() {
   const io = new IntersectionObserver(es => {
     es.forEach(en => { if (en.isIntersecting) links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + en.target.id)); });
   }, { rootMargin: '-35% 0px -60% 0px' });
-  ['resumen', 'atributos', 'compra', 'sentimiento', 'opiniones'].forEach(id => io.observe(document.getElementById(id)));
+  ['resumen', 'atributos', 'compra', 'sentimiento', 'opiniones', 'respuestas'].forEach(id => io.observe(document.getElementById(id)));
 
   $('#btnReload').addEventListener('click', async () => {
     const b = $('#btnReload'); b.disabled = true;
